@@ -1,0 +1,189 @@
+"""Background thread workers for long-running operations."""
+
+from PySide6.QtCore import QThread, Signal
+
+from core.models import AudioBook, MetadataResult
+from core.scanner import scan_directory
+from core.metadata import populate_book_from_tags, write_tags, write_cover
+
+
+class ScanWorker(QThread):
+    progress = Signal(int, int)  # current, total
+    book_found = Signal(object)  # AudioBook
+    finished_signal = Signal(list)  # all books
+
+    def __init__(self, root_path: str, parent=None):
+        super().__init__(parent)
+        self.root_path = root_path
+        self._cancelled = False
+
+    def run(self):
+        def on_progress(current, total):
+            self.progress.emit(current, total)
+
+        books = scan_directory(self.root_path, progress_callback=on_progress)
+
+        # Read embedded tags for each book
+        total = len(books)
+        processed = []
+        for i, book in enumerate(books):
+            if self._cancelled:
+                break
+            populate_book_from_tags(book)
+            processed.append(book)
+            self.book_found.emit(book)
+            self.progress.emit(i + 1, total)
+
+        self.finished_signal.emit(processed)
+
+    def cancel(self):
+        self._cancelled = True
+
+
+class FetchWorker(QThread):
+    progress = Signal(int, int, str)  # current, total, book_title
+    result = Signal(object, object)  # AudioBook, MetadataResult
+    error = Signal(object, str)  # AudioBook, error_message
+    finished_signal = Signal(int, int)
+
+    def __init__(self, books: list[AudioBook], scrapers: list, parent=None):
+        super().__init__(parent)
+        self.books = books
+        self.scrapers = scrapers
+        self._cancelled = False
+
+    def run(self):
+        total = len(self.books)
+        success = 0
+        errors = 0
+        for i, book in enumerate(self.books):
+            if self._cancelled:
+                break
+
+            self.progress.emit(i + 1, total, book.display_title)
+
+            for scraper in self.scrapers:
+                if self._cancelled:
+                    break
+                if not scraper.supports_identifier_type(book.identifier_type):
+                    continue
+                try:
+                    result = scraper.fetch(
+                        book.identifier,
+                        book.identifier_type,
+                        title_hint=book.title,
+                        author_hint=book.author,
+                    )
+                    if result:
+                        self.result.emit(book, result)
+                        success += 1
+                        break
+                except Exception as e:
+                    self.error.emit(book, str(e))
+                    errors += 1
+
+        self.finished_signal.emit(success, errors)
+
+    def cancel(self):
+        self._cancelled = True
+
+
+class SaveWorker(QThread):
+    progress = Signal(int, int)
+    finished_signal = Signal(int, int)  # success, errors
+    book_saved = Signal(object)
+
+    def __init__(self, books: list[AudioBook], parent=None):
+        super().__init__(parent)
+        self.books = books
+        self._cancelled = False
+
+    def run(self):
+        success = 0
+        errors = 0
+        total = len(self.books)
+
+        for i, book in enumerate(self.books):
+            if self._cancelled:
+                break
+            self.progress.emit(i + 1, total)
+            if write_tags(book):
+                success += 1
+                self.book_saved.emit(book)
+            else:
+                errors += 1
+
+        self.finished_signal.emit(success, errors)
+
+    def cancel(self):
+        self._cancelled = True
+
+
+class CoverDownloadWorker(QThread):
+    progress = Signal(int, int, str)
+    finished_signal = Signal(int, int)
+
+    def __init__(self, books_and_urls: list[tuple[AudioBook, str]], parent=None):
+        super().__init__(parent)
+        self.books_and_urls = books_and_urls
+        self._cancelled = False
+
+    def run(self):
+        from scrapers.cover_downloader import download_cover
+        success = 0
+        errors = 0
+        total = len(self.books_and_urls)
+
+        for i, (book, url) in enumerate(self.books_and_urls):
+            if self._cancelled:
+                break
+            self.progress.emit(i + 1, total, book.display_title)
+
+            cover_path = download_cover(
+                url, book.identifier, source_key=book.file_path
+            )
+            if cover_path:
+                # Read the image and embed it
+                try:
+                    with open(cover_path, "rb") as f:
+                        image_data = f.read()
+                    if write_cover(book, image_data, "jpeg"):
+                        success += 1
+                    else:
+                        errors += 1
+                except Exception:
+                    errors += 1
+            else:
+                errors += 1
+
+        self.finished_signal.emit(success, errors)
+
+    def cancel(self):
+        self._cancelled = True
+
+
+class FunctionWorker(QThread):
+    """Run one callable off the UI thread and return its value or error."""
+    result_ready = Signal(object)
+    error_occurred = Signal(str)
+
+    def __init__(self, function, *args, parent=None, **kwargs):
+        super().__init__(parent)
+        self.function = function
+        self.args = args
+        self.kwargs = kwargs
+        self._cancelled = False
+
+    def run(self):
+        if self._cancelled:
+            return
+        try:
+            result = self.function(*self.args, **self.kwargs)
+            if not self._cancelled:
+                self.result_ready.emit(result)
+        except Exception as exc:
+            if not self._cancelled:
+                self.error_occurred.emit(str(exc))
+
+    def cancel(self):
+        self._cancelled = True
