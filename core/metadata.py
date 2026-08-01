@@ -1,5 +1,6 @@
 """Read and write M4B (MP4) metadata tags using mutagen."""
 
+import logging
 import os
 import threading
 from io import BytesIO
@@ -11,6 +12,8 @@ from PIL import Image, UnidentifiedImageError
 from core.cache_keys import safe_cache_key
 from core.models import AudioBook, MetadataResult
 from core.config import COVERS_DIR
+
+logger = logging.getLogger(__name__)
 
 
 _FILE_WRITE_LOCKS: dict[str, threading.RLock] = {}
@@ -108,36 +111,45 @@ def _read_multi_key(tags, keys: list[str]) -> str:
     return ""
 
 
-def read_tags(book: AudioBook) -> MetadataResult:
-    """Read metadata from an M4B file into a MetadataResult."""
+def _read_tags_from_mp4(tags) -> MetadataResult:
+    """Populate a MetadataResult from an already-open MP4 tag mapping."""
     result = MetadataResult(source="embedded")
-
-    try:
-        mp4 = MP4(book.file_path)
-    except Exception as e:
-        print(f"Error reading tags from {book.file_path}: {e}")
+    if not tags:
         return result
 
-    tags = mp4.tags
-    if tags is None:
-        return result
-
-    # Standard single-key tags
     for field, key in TAG_MAP_READ.items():
         setattr(result, field, _read_tag(tags, key))
 
-    # Multi-key tags (try variants)
     for field, keys in MULTI_KEY_READ.items():
         if field == "asin":
-            continue  # Handled separately
+            continue
         setattr(result, field, _read_multi_key(tags, keys))
 
     return result
 
 
+def read_tags(book: AudioBook) -> MetadataResult:
+    """Read metadata from an M4B file into a MetadataResult."""
+    try:
+        mp4 = MP4(book.file_path)
+    except Exception as e:
+        logger.error("Error reading tags from %s: %s", book.file_path, e)
+        return MetadataResult(source="embedded")
+
+    return _read_tags_from_mp4(mp4.tags)
+
+
 def populate_book_from_tags(book: AudioBook) -> bool:
     """Read embedded tags and populate the AudioBook fields. Returns True if tags found."""
-    result = read_tags(book)
+    try:
+        mp4 = MP4(book.file_path)
+    except Exception as e:
+        logger.error("Error opening %s for tag read: %s", book.file_path, e)
+        book.snapshot()
+        return False
+
+    tags = mp4.tags or {}
+    result = _read_tags_from_mp4(tags)
 
     book.title = result.title
     book.subtitle = result.subtitle
@@ -152,28 +164,20 @@ def populate_book_from_tags(book: AudioBook) -> bool:
     book.language = result.language
     book.metadata_source = "embedded"
 
-    # Read ASIN and CDEK tags directly
-    try:
-        mp4 = MP4(book.file_path)
-        tags = mp4.tags or {}
-        book.asin_tag = _read_tag(tags, "asin") or _read_multi_key(tags, MULTI_KEY_READ.get("asin", []))
-        book.cdek_tag = _read_tag(tags, "CDEK")
+    book.asin_tag = _read_tag(tags, "asin") or _read_multi_key(
+        tags, MULTI_KEY_READ.get("asin", [])
+    )
+    book.cdek_tag = _read_tag(tags, "CDEK")
+    if not book.identifier and book.asin_tag:
+        book.identifier = book.asin_tag
+        book.identifier_type = "asin"
 
-        # Fallback: if no identifier from filename, use embedded ASIN
-        if not book.identifier and book.asin_tag:
-            book.identifier = book.asin_tag
-            book.identifier_type = "asin"
-    except Exception as e:
-        print(f"Error reading ASIN/CDEK from {book.file_path}: {e}")
-
-    # Check for embedded cover art
-    try:
-        mp4 = MP4(book.file_path)
-        if mp4.tags and "covr" in mp4.tags:
+    if tags and "covr" in tags:
+        try:
             book.has_embedded_cover = True
             _extract_cover(book, mp4)
-    except Exception as e:
-        print(f"Error extracting cover from {book.file_path}: {e}")
+        except Exception as e:
+            logger.error("Error extracting cover from %s: %s", book.file_path, e)
 
     book.snapshot()
     return bool(result.title)
@@ -207,7 +211,7 @@ def extract_cover_bytes(book: AudioBook) -> bytes | None:
         if mp4.tags and "covr" in mp4.tags:
             return bytes(mp4.tags["covr"][0])
     except Exception as e:
-        print(f"Error reading cover bytes: {e}")
+        logger.error("Error reading cover bytes: %s", e)
     return None
 
 
@@ -264,7 +268,7 @@ def _write_tags_unlocked(book: AudioBook) -> bool:
         book.snapshot()
         return True
     except Exception as e:
-        print(f"Error writing tags to {book.file_path}: {e}")
+        logger.error("Error writing tags to %s: %s", book.file_path, e)
         return False
 
 
@@ -286,7 +290,7 @@ def _write_cover_unlocked(book: AudioBook, image_data: bytes, image_format: str)
     try:
         image_data, image_format = _prepare_cover_bytes(image_data, image_format)
     except (ValueError, UnidentifiedImageError, OSError) as e:
-        print(f"Invalid cover image: {e}")
+        logger.warning("Invalid cover image: %s", e)
         return False
 
     try:
@@ -309,7 +313,7 @@ def _write_cover_unlocked(book: AudioBook, image_data: bytes, image_format: str)
         book.has_embedded_cover = True
         return True
     except Exception as e:
-        print(f"Error writing cover to {book.file_path}: {e}")
+        logger.error("Error writing cover to %s: %s", book.file_path, e)
         return False
 
 

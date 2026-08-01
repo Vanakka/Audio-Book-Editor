@@ -2,11 +2,12 @@
 
 import json
 import os
-import shutil
 import subprocess
 import tempfile
 
 from mutagen.mp4 import MP4
+
+from core.media_tools import media_tools_available, resolve_tool
 
 
 def escape_ffmetadata_value(value: str) -> str:
@@ -36,18 +37,16 @@ def build_ffmetadata(chapters: list[dict], titles: list[str]) -> str:
     return "\n".join(lines) + "\n"
 
 
-def media_tools_available() -> tuple[bool, str]:
-    """Report whether both chapter command-line dependencies are installed."""
-    missing = [name for name in ("ffprobe", "ffmpeg") if shutil.which(name) is None]
-    return (not missing, ", ".join(missing))
-
-
 def probe_chapters(file_path: str, timeout: int = 15) -> list[dict]:
     """Read chapter data with ffprobe, raising a useful error on failure."""
-    if shutil.which("ffprobe") is None:
-        raise RuntimeError("ffprobe is not installed; see README.md")
+    ffprobe = resolve_tool("ffprobe")
+    if ffprobe is None:
+        raise RuntimeError(
+            "ffprobe was not found. Install FFmpeg and add it to PATH, "
+            "or set the ffprobe path in Settings → Chapter tools."
+        )
     result = subprocess.run(
-        ["ffprobe", "-v", "error", "-print_format", "json", "-show_chapters", file_path],
+        [ffprobe, "-v", "error", "-print_format", "json", "-show_chapters", file_path],
         capture_output=True, text=True, timeout=timeout,
     )
     if result.returncode != 0:
@@ -72,9 +71,16 @@ def rewrite_chapters(file_path: str, chapters: list[dict], titles: list[str],
             metadata_file.write(metadata)
             metadata_path = metadata_file.name
 
+        ffmpeg = resolve_tool("ffmpeg")
+        if ffmpeg is None:
+            raise RuntimeError(
+                "ffmpeg was not found. Install FFmpeg and add it to PATH, "
+                "or set the ffmpeg path in Settings → Chapter tools."
+            )
+
         result = subprocess.run(
             [
-                "ffmpeg", "-y", "-i", file_path, "-i", metadata_path,
+                ffmpeg, "-y", "-i", file_path, "-i", metadata_path,
                 "-map", "0", "-map_metadata", "0", "-map_chapters", "1",
                 "-c", "copy", temp_output,
             ],

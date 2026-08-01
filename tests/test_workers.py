@@ -49,6 +49,25 @@ class WorkerCancellationTests(unittest.TestCase):
 
         self.assertEqual(counts, [(1, 1)])
 
+    def test_fetch_worker_counts_one_error_when_multiple_scrapers_fail(self):
+        class FailingScraper:
+            def __init__(self, name):
+                self._name = name
+
+            def supports_identifier_type(self, _kind):
+                return True
+
+            def fetch(self, _identifier, _kind, title_hint="", author_hint=""):
+                raise RuntimeError(f"{self._name} failed")
+
+        books = [AudioBook("one.m4b", ".", title="test")]
+        counts = []
+        worker = FetchWorker(books, [FailingScraper("a"), FailingScraper("b")])
+        worker.finished_signal.connect(lambda success, errors: counts.append((success, errors)))
+        worker.run()
+
+        self.assertEqual(counts, [(0, 1)])
+
 
 if __name__ == "__main__":
     unittest.main()

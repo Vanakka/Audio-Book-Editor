@@ -5,11 +5,29 @@ import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
 
-from core.metadata import write_cover, write_tags
+from core.metadata import populate_book_from_tags, write_cover, write_tags
 from core.models import AudioBook
 
 
 class MetadataWriteTests(unittest.TestCase):
+    @patch("core.metadata.MP4")
+    def test_populate_book_from_tags_opens_file_once(self, mp4_class):
+        fake = Mock()
+        fake.tags = {
+            "\xa9nam": ["Embedded title"],
+            "asin": ["B012345678"],
+            "covr": [Mock(imageformat=0)],
+        }
+        mp4_class.return_value = fake
+
+        book = AudioBook("book.m4b", ".")
+        with patch("core.metadata._extract_cover") as extract_cover:
+            self.assertTrue(populate_book_from_tags(book))
+
+        mp4_class.assert_called_once_with("book.m4b")
+        extract_cover.assert_called_once()
+        self.assertEqual(book.title, "Embedded title")
+        self.assertEqual(book.asin_tag, "B012345678")
     @patch("core.metadata.MP4")
     def test_clearing_fields_deletes_existing_standard_and_identifier_tags(self, mp4_class):
         fake = Mock()

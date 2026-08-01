@@ -62,11 +62,14 @@ class FetchWorker(QThread):
 
             self.progress.emit(i + 1, total, book.display_title)
 
+            book_success = False
+            attempted = False
             for scraper in self.scrapers:
                 if self._cancelled:
                     break
                 if not scraper.supports_identifier_type(book.identifier_type):
                     continue
+                attempted = True
                 try:
                     result = scraper.fetch(
                         book.identifier,
@@ -76,11 +79,15 @@ class FetchWorker(QThread):
                     )
                     if result:
                         self.result.emit(book, result)
-                        success += 1
+                        book_success = True
                         break
                 except Exception as e:
                     self.error.emit(book, str(e))
-                    errors += 1
+
+            if book_success:
+                success += 1
+            elif attempted:
+                errors += 1
 
         self.finished_signal.emit(success, errors)
 
@@ -92,6 +99,7 @@ class SaveWorker(QThread):
     progress = Signal(int, int)
     finished_signal = Signal(int, int)  # success, errors
     book_saved = Signal(object)
+    book_failed = Signal(object)
 
     def __init__(self, books: list[AudioBook], parent=None):
         super().__init__(parent)
@@ -112,6 +120,7 @@ class SaveWorker(QThread):
                 self.book_saved.emit(book)
             else:
                 errors += 1
+                self.book_failed.emit(book)
 
         self.finished_signal.emit(success, errors)
 
@@ -143,11 +152,13 @@ class CoverDownloadWorker(QThread):
                 url, book.identifier, source_key=book.file_path
             )
             if cover_path:
-                # Read the image and embed it
                 try:
                     with open(cover_path, "rb") as f:
                         image_data = f.read()
-                    if write_cover(book, image_data, "jpeg"):
+                    image_format = (
+                        "png" if cover_path.lower().endswith(".png") else "jpeg"
+                    )
+                    if write_cover(book, image_data, image_format):
                         success += 1
                     else:
                         errors += 1

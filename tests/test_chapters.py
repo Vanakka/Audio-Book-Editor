@@ -13,15 +13,16 @@ class ChapterMetadataTests(unittest.TestCase):
 
         self.assertIn(r"title=Part \= 1\; \#intro\\draft continued", metadata)
 
-    @patch("core.chapters.shutil.which", return_value=None)
-    def test_missing_ffprobe_has_actionable_error(self, _which):
-        with self.assertRaisesRegex(RuntimeError, "README"):
+    @patch("core.chapters.resolve_tool", return_value=None)
+    def test_missing_ffprobe_has_actionable_error(self, _resolve):
+        with self.assertRaisesRegex(RuntimeError, "ffprobe"):
             probe_chapters("book.m4b")
 
     @patch("core.chapters.probe_chapters", return_value=[{"start": 0, "end": 1}])
     @patch("core.chapters.MP4")
+    @patch("core.chapters.resolve_tool", return_value="ffmpeg")
     @patch("core.chapters.media_tools_available", return_value=(True, ""))
-    def test_rewrite_replaces_original_only_after_valid_output(self, _tools, _mp4, _probe):
+    def test_rewrite_replaces_original_only_after_valid_output(self, _tools, _resolve, _mp4, _probe):
         with TemporaryDirectory() as root:
             source = Path(root) / "book.m4b"
             source.write_bytes(b"original")

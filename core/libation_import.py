@@ -1,8 +1,11 @@
 """Parse a Libation Library Export XLSX file for audiobook metadata."""
 
+import logging
 from pathlib import Path
 
 from core.models import MetadataResult
+
+logger = logging.getLogger(__name__)
 
 
 def parse_libation_export(xlsx_path: str) -> dict[str, MetadataResult]:
@@ -10,7 +13,7 @@ def parse_libation_export(xlsx_path: str) -> dict[str, MetadataResult]:
     try:
         from openpyxl import load_workbook
     except ImportError:
-        print("openpyxl not installed, cannot parse Libation export")
+        logger.error("openpyxl not installed, cannot parse Libation export")
         return {}
 
     path = Path(xlsx_path)
@@ -109,7 +112,7 @@ def parse_libation_export(xlsx_path: str) -> dict[str, MetadataResult]:
 
         wb.close()
     except Exception as e:
-        print(f"Error parsing Libation export: {e}")
+        logger.error("Error parsing Libation export: %s", e)
 
     return results
 

@@ -1,17 +1,18 @@
 """Main application window."""
 
+import base64
 import os
 
 from PySide6.QtWidgets import (
     QMainWindow, QSplitter, QToolBar, QStatusBar, QFileDialog,
     QMessageBox, QApplication,
 )
-from PySide6.QtCore import Qt, QSize, QThread
+from PySide6.QtCore import Qt, QSize, QThread, QEventLoop, QByteArray
 from PySide6.QtGui import QAction, QKeySequence
 
 from core.config import Config
+from core.media_tools import set_tool_paths
 from core.models import AudioBook, MetadataResult
-from core.metadata import write_tags, write_cover
 from core.renamer import rename_file
 from core.libation_import import parse_libation_export
 from scrapers.audible import AudibleScraper
@@ -34,6 +35,10 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.config = Config()
+        set_tool_paths(
+            self.config.get("ffprobe_path", ""),
+            self.config.get("ffmpeg_path", ""),
+        )
         self._books: list[AudioBook] = []
         self._libation_data: dict[str, MetadataResult] = {}
         self._scan_worker = None
@@ -52,6 +57,7 @@ class MainWindow(QMainWindow):
 
         self._apply_theme()
         self._apply_display_settings()
+        self._restore_window_state()
 
         # Auto-load Libation data if configured
         libation_path = self.config.get("libation_export_path", "")
@@ -247,7 +253,10 @@ class MainWindow(QMainWindow):
     def _on_settings(self):
         dlg = SettingsDialog(self.config, self)
         if dlg.exec():
-            # Reload libation if path changed
+            set_tool_paths(
+                self.config.get("ffprobe_path", ""),
+                self.config.get("ffmpeg_path", ""),
+            )
             libation_path = self.config.get("libation_export_path", "")
             if libation_path:
                 self._load_libation(libation_path)
@@ -572,24 +581,53 @@ class MainWindow(QMainWindow):
             return
 
         if save_on_close:
-            failed = []
-            for book in modified:
-                if write_tags(book):
-                    self._rename_file_if_enabled(book)
-                else:
-                    failed.append(book.display_title)
-            if failed:
+            failed_titles = self._save_books_blocking(modified)
+            if failed_titles:
                 QMessageBox.warning(
                     self, "Save Failed",
                     "The app will remain open because these books could not be saved:\n"
-                    + "\n".join(failed),
+                    + "\n".join(failed_titles),
                 )
                 event.ignore()
                 return
 
-        # Save window state
+        self._persist_window_state()
         self.config.save()
         super().closeEvent(event)
+
+    def _restore_window_state(self):
+        geometry = self.config.get("window_geometry")
+        if geometry:
+            try:
+                self.restoreGeometry(QByteArray(base64.b64decode(geometry.encode("ascii"))))
+            except (ValueError, TypeError):
+                pass
+
+        splitter_sizes = self.config.get("splitter_sizes")
+        if isinstance(splitter_sizes, list) and len(splitter_sizes) == 2:
+            self.splitter.setSizes(splitter_sizes)
+
+    def _persist_window_state(self):
+        self.config.set(
+            "window_geometry",
+            base64.b64encode(bytes(self.saveGeometry())).decode("ascii"),
+        )
+        self.config.set("splitter_sizes", self.splitter.sizes())
+
+    def _save_books_blocking(self, books: list) -> list[str]:
+        """Save modified books on a worker thread and block until finished."""
+        failed_titles: list[str] = []
+        loop = QEventLoop(self)
+        worker = SaveWorker(books, self)
+        worker.book_saved.connect(self._rename_file_if_enabled)
+        worker.book_failed.connect(
+            lambda book: failed_titles.append(book.display_title)
+        )
+        worker.finished_signal.connect(lambda _s, _e: loop.quit())
+        worker.finished.connect(worker.deleteLater)
+        worker.start()
+        loop.exec()
+        return failed_titles
 
     def _stop_background_workers(self) -> bool:
         workers = [worker for worker in self.findChildren(QThread) if worker.isRunning()]

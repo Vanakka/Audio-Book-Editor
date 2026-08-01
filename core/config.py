@@ -1,9 +1,13 @@
-import json
-import os
 import copy
-from pathlib import Path
+import json
+import logging
+import os
 
-APP_DIR = Path(__file__).parent.parent
+from core.app_paths import app_dir
+
+logger = logging.getLogger(__name__)
+
+APP_DIR = app_dir()
 CONFIG_FILE = APP_DIR / "data" / "config.json"
 LIBRARY_FILE = APP_DIR / "data" / "library.json"
 CACHE_DIR = APP_DIR / "cache"
@@ -11,7 +15,7 @@ COVERS_DIR = CACHE_DIR / "covers"
 METADATA_CACHE_DIR = CACHE_DIR / "metadata"
 
 DEFAULT_CONFIG = {
-    "last_root_folder": "D:\\Audio-Books",
+    "last_root_folder": "",
     "libation_export_path": "",
     "rename_template": "{series}, Book {number}",
     "scraping_delay": 1.5,
@@ -29,6 +33,8 @@ DEFAULT_CONFIG = {
     "file_rename_template": "{series}, Book {number} [{identifier}]",
     "window_geometry": None,
     "splitter_sizes": None,
+    "ffprobe_path": "",
+    "ffmpeg_path": "",
 }
 
 
@@ -46,8 +52,8 @@ class Config:
                 self._data.update(saved)
                 if isinstance(scraper_settings, dict):
                     self._data["scrapers_enabled"].update(scraper_settings)
-            except (json.JSONDecodeError, OSError):
-                pass
+            except (json.JSONDecodeError, OSError) as e:
+                logger.warning("Could not load config from %s: %s", CONFIG_FILE, e)
 
     def save(self):
         CONFIG_FILE.parent.mkdir(parents=True, exist_ok=True)

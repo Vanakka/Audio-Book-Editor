@@ -1,5 +1,6 @@
 """Download and cache cover art images."""
 
+import logging
 from pathlib import Path
 
 import requests
@@ -10,6 +11,8 @@ from core.config import COVERS_DIR
 from core.cache_keys import safe_cache_key
 from core.metadata import MAX_COVER_BYTES, MAX_COVER_PIXELS
 from scrapers.http import get_with_retry
+
+logger = logging.getLogger(__name__)
 
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
@@ -56,7 +59,7 @@ def download_cover(url: str, identifier: str, max_size: int = 2400,
         return str(cache_path)
 
     except Exception as e:
-        print(f"Failed to download cover from {url}: {e}")
+        logger.error("Failed to download cover from %s: %s", url, e)
         return None
 
 

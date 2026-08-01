@@ -1,0 +1,1 @@
+"""Detail panel tab building blocks."""

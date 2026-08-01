@@ -48,6 +48,34 @@ class SettingsDialog(QDialog):
         paths_group.setLayout(paths_layout)
         layout.addWidget(paths_group)
 
+        chapter_group = QGroupBox("Chapter tools")
+        chapter_layout = QFormLayout()
+
+        ffprobe_row = QHBoxLayout()
+        self.ffprobe_edit = QLineEdit()
+        self.ffprobe_edit.setPlaceholderText("Auto-detect from PATH or WinGet FFmpeg")
+        ffprobe_browse = QPushButton("Browse")
+        ffprobe_browse.clicked.connect(lambda: self._browse_tool(self.ffprobe_edit))
+        ffprobe_row.addWidget(self.ffprobe_edit, 1)
+        ffprobe_row.addWidget(ffprobe_browse)
+        chapter_layout.addRow("ffprobe:", ffprobe_row)
+
+        ffmpeg_row = QHBoxLayout()
+        self.ffmpeg_edit = QLineEdit()
+        self.ffmpeg_edit.setPlaceholderText("Auto-detect from PATH or WinGet FFmpeg")
+        ffmpeg_browse = QPushButton("Browse")
+        ffmpeg_browse.clicked.connect(lambda: self._browse_tool(self.ffmpeg_edit))
+        ffmpeg_row.addWidget(self.ffmpeg_edit, 1)
+        ffmpeg_row.addWidget(ffmpeg_browse)
+        chapter_layout.addRow("ffmpeg:", ffmpeg_row)
+
+        chapter_layout.addRow("", QLabel(
+            "Required for the Chapters tab. Audiobook Shelf bundles these tools; "
+            "this app uses your local FFmpeg install."
+        ))
+        chapter_group.setLayout(chapter_layout)
+        layout.addWidget(chapter_group)
+
         # Scrapers group
         scrapers_group = QGroupBox("Metadata Sources")
         scrapers_layout = QVBoxLayout()
@@ -133,6 +161,8 @@ class SettingsDialog(QDialog):
     def _load_values(self):
         self.folder_edit.setText(self.config.get("last_root_folder", ""))
         self.libation_edit.setText(self.config.get("libation_export_path", ""))
+        self.ffprobe_edit.setText(self.config.get("ffprobe_path", ""))
+        self.ffmpeg_edit.setText(self.config.get("ffmpeg_path", ""))
         self.template_edit.setText(self.config.get("rename_template", "{series}, Book {number}"))
         self.delay_spin.setValue(self.config.get("scraping_delay", 1.5))
 
@@ -157,6 +187,8 @@ class SettingsDialog(QDialog):
     def _on_save(self):
         self.config.set("last_root_folder", self.folder_edit.text().strip())
         self.config.set("libation_export_path", self.libation_edit.text().strip())
+        self.config.set("ffprobe_path", self.ffprobe_edit.text().strip())
+        self.config.set("ffmpeg_path", self.ffmpeg_edit.text().strip())
         self.config.set("rename_template", self.template_edit.text().strip())
         self.config.set("scraping_delay", self.delay_spin.value())
         self.config.set("scrapers_enabled", {
@@ -185,3 +217,10 @@ class SettingsDialog(QDialog):
         )
         if path:
             self.libation_edit.setText(path)
+
+    def _browse_tool(self, target: QLineEdit):
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Select Executable", "", "Executables (*.exe);;All Files (*)"
+        )
+        if path:
+            target.setText(path)

@@ -1,11 +1,14 @@
 """Folder/file rename and sort logic with dry-run preview and safety checks."""
 
+import logging
 import os
 import re
 import shutil
 from pathlib import Path
 
 from core.models import AudioBook
+
+logger = logging.getLogger(__name__)
 
 TEMPLATES = [
     ("Series, Book #", "{series}, Book {number}"),
@@ -102,7 +105,7 @@ def execute_renames(books: list[AudioBook], template: str) -> tuple[int, int]:
 
             success += 1
         except OSError as e:
-            print(f"Failed to rename {old_path} -> {new_path}: {e}")
+            logger.error("Failed to rename %s -> %s: %s", old_path, new_path, e)
             errors += 1
 
     return success, errors
@@ -123,7 +126,7 @@ def rename_to_filename(book: AudioBook, new_name: str) -> bool:
         new_name += ".m4b"
 
     if Path(new_name).name != new_name or _sanitize_filename(Path(new_name).stem) != Path(new_name).stem:
-        print(f"Cannot rename: invalid filename {new_name!r}")
+        logger.warning("Cannot rename: invalid filename %r", new_name)
         return False
 
     old_path = Path(book.file_path)
@@ -136,10 +139,10 @@ def rename_to_filename(book: AudioBook, new_name: str) -> bool:
     new_cue = new_path.with_suffix(".cue")
 
     if new_path.exists() and new_path != old_path:
-        print(f"Cannot rename: {new_path} already exists")
+        logger.warning("Cannot rename: %s already exists", new_path)
         return False
     if old_cue.exists() and new_cue.exists() and new_cue != old_cue:
-        print(f"Cannot rename: {new_cue} already exists")
+        logger.warning("Cannot rename: %s already exists", new_cue)
         return False
 
     try:
@@ -154,7 +157,7 @@ def rename_to_filename(book: AudioBook, new_name: str) -> bool:
         book.file_path = str(new_path)
         return True
     except OSError as e:
-        print(f"Failed to rename file {old_path.name} -> {new_name}: {e}")
+        logger.error("Failed to rename file %s -> %s: %s", old_path.name, new_name, e)
         return False
 
 
@@ -285,7 +288,7 @@ def execute_sort(previews: list[tuple[AudioBook, str, str, bool]]) -> tuple[int,
 
             success += 1
         except (OSError, shutil.Error) as e:
-            print(f"Failed to move {old_path} -> {new_path}: {e}")
+            logger.error("Failed to move %s -> %s: %s", old_path, new_path, e)
             errors += 1
 
     return success, errors

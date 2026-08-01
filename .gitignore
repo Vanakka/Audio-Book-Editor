@@ -3,3 +3,5 @@ __pycache__/
 *.py[cod]
 cache/
 data/config.json
+dist/
+build/audiobook-manager/

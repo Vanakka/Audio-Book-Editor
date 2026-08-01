@@ -1,10 +1,10 @@
 """Theme stylesheets for the application."""
 
 import os
-from pathlib import Path
 
-RES = Path(__file__).parent.parent / "resources"
-PAPER_PATH = str(RES / "paper_bg.jpg").replace("\\", "/")
+from core.app_paths import resource_dir
+
+PAPER_PATH = str(resource_dir() / "paper_bg.jpg").replace("\\", "/")
 
 DARK_THEME = """
 QMainWindow, QDialog {

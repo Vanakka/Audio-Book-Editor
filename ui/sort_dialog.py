@@ -14,7 +14,7 @@ from PySide6.QtGui import QColor
 
 from core.models import AudioBook
 from core.renamer import group_by_series, preview_sort, execute_sort
-from ui.detail_panel import PaperGroupBox
+from ui.detail.widgets import PaperGroupBox
 
 
 class SortDialog(QDialog):

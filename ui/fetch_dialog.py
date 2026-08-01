@@ -14,10 +14,10 @@ from PySide6.QtGui import (
     QPainterPath, QLinearGradient,
 )
 
+from core.app_paths import resource_dir
 from core.models import AudioBook, MetadataResult
 
-RES = Path(__file__).parent.parent / "resources"
-PAPER_PATH = str(RES / "paper_bg.jpg")
+PAPER_PATH = str(resource_dir() / "paper_bg.jpg")
 
 METADATA_FIELDS = [
     ("title", "Title"),

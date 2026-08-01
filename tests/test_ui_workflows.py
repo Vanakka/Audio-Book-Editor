@@ -39,7 +39,7 @@ class MainWindowWorkflowTests(unittest.TestCase):
 
         with patch.object(QMessageBox, "question", return_value=QMessageBox.Save), \
                 patch.object(QMessageBox, "warning"), \
-                patch("ui.main_window.write_tags", return_value=False), \
+                patch.object(window, "_save_books_blocking", return_value=["Changed again"]), \
                 patch.object(window, "_stop_background_workers", return_value=True):
             window.closeEvent(event)
 
@@ -56,8 +56,7 @@ class MainWindowWorkflowTests(unittest.TestCase):
             writer_threads.append(QThread.currentThread())
             return True
 
-        with patch("ui.main_window.write_tags", side_effect=record_writer_thread), \
-                patch("ui.workers.write_tags", side_effect=record_writer_thread), \
+        with patch("ui.workers.write_tags", side_effect=record_writer_thread), \
                 patch.object(window.library_panel, "refresh_current"):
             window._on_save_book(book)
             deadline = time.monotonic() + 2
