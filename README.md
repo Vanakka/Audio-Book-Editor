@@ -12,6 +12,30 @@ py -3.12 -m venv .venv
 
 Run `launch.bat`; it automatically prefers `.venv` when present.
 
+### Linux / headless development
+
+On a Debian/Ubuntu machine (including Cloud Agent VMs) run the helper script to
+install the Qt system libraries, FFmpeg, Xvfb, and the locked Python
+dependencies into `.venv`:
+
+```bash
+./scripts/setup-linux-dev.sh
+```
+
+The GUI needs a display server. On a headless machine, run it (or the Qt tests)
+under a virtual display:
+
+```bash
+# Run the app headless
+QT_QPA_PLATFORM=offscreen .venv/bin/python main.py
+
+# Run the app on a virtual X display (e.g. for a VNC/recorded session)
+xvfb-run -a .venv/bin/python main.py
+
+# Run the test suite headless
+QT_QPA_PLATFORM=offscreen .venv/bin/python -m unittest discover -s tests -v
+```
+
 ## Portable build
 
 Package a self-contained copy that runs without Python installed on the target PC. The build writes only to subfolders and does not modify or overwrite source code.
