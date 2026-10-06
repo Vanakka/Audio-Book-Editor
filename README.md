@@ -24,6 +24,14 @@ Package a self-contained copy that runs without Python installed on the target P
 
 This installs PyInstaller into `.venv` (if needed), bundles the app, and stages FFmpeg when it is found on the build machine. Build-only dependencies are listed in `requirements-build.txt`.
 
+The build stops if installation, packaging, or staging fails. It refuses to replace a portable folder containing saved settings, logs, or cached covers. To build a fresh copy alongside it:
+
+```powershell
+.\build-portable.ps1 -DistRoot 'dist\fresh-build'
+```
+
+The result is `dist/fresh-build/AudioBook-Manager/`. Copy your existing `data/` and `cache/` into that folder after closing the app.
+
 ### Output locations
 
 | Path | Purpose |
@@ -70,7 +78,9 @@ A code audit in June 2026 led to the following fixes:
 - **Logging** — Errors and warnings are written to `data/app.log` (rotating) instead of being lost when the app is launched without a console.
 - **Cover embedding** — Downloaded covers use the correct JPEG/PNG format when embedded into M4B files.
 - **UI prototypes** — Standalone `mockup_*.py` files were moved to `mockups/`.
-- **Tests** — Added coverage for single-file tag reads, per-book fetch accounting, and portable test discovery via `tests/__init__.py`. The suite now has 25 tests.
+- **Tests** — Coverage includes single-file tag reads, per-book fetch accounting, and portable test discovery via `tests/__init__.py`.
+
+The October 2026 audit repaired file collision handling, chapter rewrites, save/edit races, metadata matching, cover download limits, settings validation, and portable build safety. Runtime dependencies, including transitives, are pinned in `requirements-lock.txt`. See [the audit record](AUDIT-2026-10-05.md) for findings and verification.
 
 ## Chapter tools
 
@@ -90,12 +100,12 @@ ffmpeg -version
 ## Verification
 
 ```powershell
-.venv\Scripts\python -m unittest discover -s tests -v
+.venv\Scripts\python -m unittest discover -s tests -t . -v
 .venv\Scripts\python -m compileall -q core scrapers ui tests main.py
 .venv\Scripts\python -m pip check
 ```
 
-Tests can be run from any working directory; `tests/__init__.py` adds the project root to `sys.path` automatically.
+Run these commands from the project root. From another working directory, pass absolute paths for both `-s` (the tests directory) and `-t` (the project root); `tests/__init__.py` adds the project root to `sys.path`.
 
 ## Logs
 

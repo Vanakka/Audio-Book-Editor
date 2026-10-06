@@ -132,6 +132,7 @@ class DetailsTabMixin:
     def _on_asin_search(self):
         if not self._current_book:
             return
+        book = self._current_book
         title = self.title_edit.text().strip()
         author = self.author_edit.text().strip()
         if not title:
@@ -140,13 +141,13 @@ class DetailsTabMixin:
 
         self._run_background(
             search_catalog, title, author,
-            on_result=self._show_asin_results,
+            on_result=lambda products, target=book: self._show_asin_results(products, target),
             on_error=lambda error: QMessageBox.warning(self, "Search Failed", error),
             button=self.asin_search_btn,
         )
 
-    def _show_asin_results(self, products):
-        if not self._current_book:
+    def _show_asin_results(self, products, book):
+        if self._current_book is not book:
             return
 
         if not products:
@@ -198,9 +199,9 @@ class DetailsTabMixin:
                 self.cdek_edit.setText(asin)
                 self.cdek_edit.setReadOnly(False)
                 self.cdek_edit.setStyleSheet("")
-                if self._current_book:
-                    self._current_book.asin_tag = asin
-                    self._current_book.cdek_tag = asin
-                    self._current_book.identifier = asin
-                    self._current_book.identifier_type = "asin"
-                    self._current_book.check_modified()
+                if self._current_book is book:
+                    book.asin_tag = asin
+                    book.cdek_tag = asin
+                    book.identifier = asin
+                    book.identifier_type = "asin"
+                    book.check_modified()

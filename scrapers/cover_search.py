@@ -10,7 +10,8 @@ from scrapers.http import RETRY_STATUSES, get_with_retry
 
 
 def search_audible_covers(query: str, author: str = "") -> list[dict]:
-    if re.fullmatch(r"[A-Za-z0-9]{10}", query):
+    # Ordinary ten-letter titles (e.g. Foundation) are not catalog IDs.
+    if re.fullmatch(r"(?:B[0-9][A-Za-z0-9]{8}|[0-9]{9}[0-9X])", query, re.IGNORECASE):
         response = get_with_retry(
             f"{API_URL}/{query.upper()}", requester=requests.get,
             params={"response_groups": "product_desc,media"},

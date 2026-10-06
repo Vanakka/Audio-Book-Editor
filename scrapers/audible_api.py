@@ -85,6 +85,8 @@ class AudibleAPIScraper(BaseScraper):
             resp.raise_for_status()
             data = resp.json()
         except (requests.RequestException, ValueError) as e:
+            if isinstance(e, requests.RequestException) and e.response is not None and e.response.status_code == 404:
+                return None
             raise RuntimeError(
                 f"Audible API request failed for {identifier}: {e}"
             ) from e
@@ -95,7 +97,9 @@ class AudibleAPIScraper(BaseScraper):
 
         return self._parse_product(product)
 
-    def _parse_product(self, prod: dict) -> MetadataResult:
+    def _parse_product(self, prod: dict) -> MetadataResult | None:
+        if not prod.get("title"):
+            return None
         result = MetadataResult(source="audible_api")
 
         result.title = prod.get("title", "")

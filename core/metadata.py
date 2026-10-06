@@ -246,11 +246,17 @@ def _write_tags_unlocked(book: AudioBook) -> bool:
                 tags[key] = [value]
             elif key in tags:
                 del tags[key]
+            for alias in MULTI_KEY_READ.get(field, []):
+                if alias != key:
+                    tags.pop(alias, None)
 
         # Freeform tags
         for field, key in WRITE_FREEFORM.items():
             value = getattr(book, field, "")
             _write_freeform(tags, key, value)
+            for alias in MULTI_KEY_READ.get(field, []):
+                if alias != key:
+                    tags.pop(alias, None)
 
         # ASIN / CDEK
         if book.asin_tag:
@@ -259,6 +265,7 @@ def _write_tags_unlocked(book: AudioBook) -> bool:
         else:
             tags.pop("asin", None)
             tags.pop("----:com.pilabor.tone:AUDIBLE_ASIN", None)
+        tags.pop("----:com.apple.iTunes:AUDIBLE_ASIN", None)
         if book.cdek_tag:
             tags["CDEK"] = [book.cdek_tag]
         else:
@@ -289,7 +296,7 @@ def write_cover(book: AudioBook, image_data: bytes, image_format: str = "jpeg") 
 def _write_cover_unlocked(book: AudioBook, image_data: bytes, image_format: str) -> bool:
     try:
         image_data, image_format = _prepare_cover_bytes(image_data, image_format)
-    except (ValueError, UnidentifiedImageError, OSError) as e:
+    except (ValueError, UnidentifiedImageError, Image.DecompressionBombError, OSError) as e:
         logger.warning("Invalid cover image: %s", e)
         return False
 
@@ -323,9 +330,9 @@ def _prepare_cover_bytes(image_data: bytes, preferred_format: str) -> tuple[byte
         raise ValueError("Cover image is empty or exceeds 25 MB")
 
     with Image.open(BytesIO(image_data)) as image:
-        image.load()
         if image.width * image.height > MAX_COVER_PIXELS:
             raise ValueError("Cover image has too many pixels")
+        image.load()
         image.thumbnail((MAX_COVER_DIMENSION, MAX_COVER_DIMENSION), Image.Resampling.LANCZOS)
 
         output = BytesIO()

@@ -83,7 +83,10 @@ class GoodreadsScraper(BaseScraper):
         except requests.RequestException as e:
             raise RuntimeError(f"Goodreads book request failed: {e}") from e
 
-        return self._parse_book_page(resp.text)
+        result = self._parse_book_page(resp.text)
+        if result and is_relevant(result.title, title_hint, result.author, author_hint):
+            return result
+        return None
 
     def _rate_limit(self):
         elapsed = time.time() - self._last_request

@@ -1,9 +1,5 @@
 import unittest
 from unittest.mock import Mock, patch
-import sys
-
-# Keep this unit test independent from the desktop app's installed packages.
-sys.modules.setdefault("requests", Mock())
 from scrapers.audible_api import search_catalog
 
 

@@ -47,6 +47,8 @@ class AudibleScraper(BaseScraper):
                 return None
             resp.raise_for_status()
         except requests.RequestException as e:
+            if e.response is not None and e.response.status_code == 404:
+                return None
             raise RuntimeError(f"Audible request failed for {identifier}: {e}") from e
 
         return self._parse_page(resp.text, identifier)

@@ -2,6 +2,7 @@
 
 import base64
 import os
+from pathlib import Path
 
 from PySide6.QtWidgets import (
     QMainWindow, QSplitter, QToolBar, QStatusBar, QFileDialog,
@@ -231,10 +232,9 @@ class MainWindow(QMainWindow):
             self, "Select Audio Books Folder",
             self.config.get("last_root_folder", ""),
         )
-        if folder:
+        if folder and self._scan_folder(folder):
             self.config.set("last_root_folder", folder)
             self.config.save()
-            self._scan_folder(folder)
 
     def _on_rescan(self):
         folder = self.config.get("last_root_folder", "")
@@ -280,10 +280,21 @@ class MainWindow(QMainWindow):
 
     def _start_background_save(self, books: list[AudioBook]):
         """Save without blocking the UI while Mutagen rewrites large M4B files."""
+        worker = self._make_save_worker(books)
+        if worker is None:
+            return
+        worker.finished_signal.connect(self._on_background_save_finished)
+        pending = worker.books
+        count_label = pending[0].display_title if len(pending) == 1 else f"{len(pending)} audiobooks"
+        self.status_bar.showMessage(f"Saving {count_label}...")
+        worker.start()
+
+    def _make_save_worker(self, books: list[AudioBook]) -> SaveWorker | None:
+        """Claim paths for every save entry point, including batch saves."""
         pending = []
         pending_paths = set()
         for book in books:
-            path_key = os.path.normcase(os.path.abspath(book.file_path))
+            path_key = os.path.normcase(os.path.realpath(os.path.abspath(book.file_path)))
             if path_key not in self._saving_paths:
                 pending.append(book)
                 pending_paths.add(path_key)
@@ -291,17 +302,14 @@ class MainWindow(QMainWindow):
 
         if not pending:
             self.status_bar.showMessage("That audiobook is already being saved")
-            return
+            return None
 
         worker = SaveWorker(pending, self)
         self._active_save_workers.add(worker)
         self._save_worker_paths[worker] = pending_paths
         worker.book_saved.connect(self._rename_file_if_enabled)
-        worker.finished_signal.connect(self._on_background_save_finished)
         worker.finished.connect(self._on_background_save_stopped)
-        count_label = pending[0].display_title if len(pending) == 1 else f"{len(pending)} audiobooks"
-        self.status_bar.showMessage(f"Saving {count_label}...")
-        worker.start()
+        return worker
 
     def _on_background_save_finished(self, success: int, errors: int):
         self.library_panel.refresh_current()
@@ -318,10 +326,13 @@ class MainWindow(QMainWindow):
         worker = self.sender()
         if not isinstance(worker, SaveWorker):
             return
+        self._release_save_paths(worker)
+        worker.deleteLater()
+
+    def _release_save_paths(self, worker: SaveWorker):
         self._active_save_workers.discard(worker)
         for path_key in self._save_worker_paths.pop(worker, set()):
             self._saving_paths.discard(path_key)
-        worker.deleteLater()
 
     def _rename_file_if_enabled(self, book: AudioBook):
         if self.config.get("rename_file_on_save", False):
@@ -334,14 +345,14 @@ class MainWindow(QMainWindow):
             self.status_bar.showMessage("No modified books to save")
             return
 
-        dlg = BatchDialog(modified, "Save Tags", self)
-        worker = SaveWorker(modified, self)
+        worker = self._make_save_worker(modified)
+        if worker is None:
+            return
+        dlg = BatchDialog(worker.books, "Save Tags", self)
         dlg.set_worker(worker)
         worker.progress.connect(lambda c, t: dlg.update_progress(c, t))
-        worker.book_saved.connect(self._rename_file_if_enabled)
         worker.finished_signal.connect(lambda s, e: dlg.set_finished(s, e))
         worker.finished_signal.connect(lambda _s, _e: self.library_panel.refresh_current())
-        worker.finished.connect(worker.deleteLater)
         worker.start()
         dlg.exec()
 
@@ -416,7 +427,7 @@ class MainWindow(QMainWindow):
         dlg.exec()
 
     def _on_batch_fetch_result(self, book: AudioBook, result: MetadataResult):
-        if book not in self._books:
+        if not any(active is book for active in self._books):
             return
         # Apply non-empty fields
         for field in ("title", "subtitle", "author", "narrator", "series",
@@ -426,6 +437,11 @@ class MainWindow(QMainWindow):
             if val and not getattr(book, field, ""):
                 setattr(book, field, val)
         book.check_modified()
+        if self.detail_panel._current_book is book:
+            self.detail_panel.refresh_book_state(book, refresh_metadata=True)
+        row = next(index for index, active in enumerate(self._books) if active is book)
+        self.library_panel.model.refresh_row(row)
+        self.library_panel._update_info()
 
     def _on_rename(self):
         books = self.library_panel.get_selected_books()
@@ -434,13 +450,48 @@ class MainWindow(QMainWindow):
         if not books:
             return
 
+        self._scan_worker = None
+        if not self._stop_background_workers():
+            self.status_bar.showMessage("A background operation is still stopping; try again shortly")
+            return
+        QApplication.processEvents()
+        if not self._confirm_unsaved_changes("renaming folders", discard_changes=True):
+            return
+        self.detail_panel._on_stop_preview()
+        tracked_paths = [
+            (book, Path(book.file_path), Path(book.folder_path)) for book in self._books
+        ]
+        selected_folders = [(book, Path(book.folder_path)) for book in books]
+
         dlg = RenameDialog(books, self)
         dlg.renames_completed.connect(
             lambda n: self.status_bar.showMessage(f"Renamed {n} folders")
         )
         if dlg.exec():
-            # Rescan to update paths
-            self._on_rescan()
+            # Naming is driven only by selected books; the entire moved folder
+            # also contains unselected tracked siblings and nested folders.
+            moves = [
+                (source, Path(book.folder_path))
+                for book, source in selected_folders
+                if str(source) != book.folder_path
+            ]
+            moves.sort(key=lambda move: len(move[0].parts), reverse=True)
+            for book, old_file, old_folder in tracked_paths:
+                for source, destination in moves:
+                    try:
+                        relative_file = old_file.relative_to(source)
+                        relative_folder = old_folder.relative_to(source)
+                    except ValueError:
+                        continue
+                    book.file_path = str(destination / relative_file)
+                    book.folder_path = str(destination / relative_folder)
+                    break
+            for row in range(len(self._books)):
+                self.library_panel.model.refresh_row(row)
+            self.library_panel._update_info()
+            current = self.detail_panel._current_book
+            if current is not None:
+                self.detail_panel.refresh_book_state(current)
 
     def _on_sort_library(self):
         if not self._books:
@@ -501,12 +552,15 @@ class MainWindow(QMainWindow):
         self.library_panel.model.layoutChanged.emit()
         self.library_panel._update_info()
 
-    def _scan_folder(self, folder: str):
-        if self._scan_worker and self._scan_worker.isRunning():
-            self._scan_worker.cancel()
-            if not self._scan_worker.wait(5000):
-                self.status_bar.showMessage("The current scan is still stopping; try again shortly")
-                return
+    def _scan_folder(self, folder: str) -> bool:
+        # Discard a superseded scan's queued results before draining workers.
+        self._scan_worker = None
+        if not self._stop_background_workers():
+            self.status_bar.showMessage("A background operation is still stopping; try again shortly")
+            return False
+        QApplication.processEvents()
+        if not self._confirm_unsaved_changes("reloading the library"):
+            return False
 
         self.status_bar.showMessage(f"Scanning {folder}...")
         self.detail_panel.clear()
@@ -520,6 +574,7 @@ class MainWindow(QMainWindow):
             lambda books, active=worker: self._on_scan_complete(active, books)
         )
         self._scan_worker.start()
+        return True
 
     def _on_scan_complete(self, worker: ScanWorker, books: list[AudioBook]):
         if worker is not self._scan_worker:
@@ -557,21 +612,7 @@ class MainWindow(QMainWindow):
         return scrapers
 
     def closeEvent(self, event):
-        # Check for unsaved changes
-        modified = [b for b in self._books if b.is_modified]
-        save_on_close = False
-        if modified:
-            reply = QMessageBox.question(
-                self, "Unsaved Changes",
-                f"You have {len(modified)} book(s) with unsaved changes.\nSave before closing?",
-                QMessageBox.Save | QMessageBox.Discard | QMessageBox.Cancel,
-            )
-            if reply == QMessageBox.Save:
-                save_on_close = True
-            elif reply == QMessageBox.Cancel:
-                event.ignore()
-                return
-
+        self._scan_worker = None
         if not self._stop_background_workers():
             QMessageBox.warning(
                 self, "Background Work Active",
@@ -579,21 +620,50 @@ class MainWindow(QMainWindow):
             )
             event.ignore()
             return
-
-        if save_on_close:
-            failed_titles = self._save_books_blocking(modified)
-            if failed_titles:
-                QMessageBox.warning(
-                    self, "Save Failed",
-                    "The app will remain open because these books could not be saved:\n"
-                    + "\n".join(failed_titles),
-                )
-                event.ignore()
-                return
+        QApplication.processEvents()
+        if not self._confirm_unsaved_changes("closing"):
+            event.ignore()
+            return
 
         self._persist_window_state()
         self.config.save()
         super().closeEvent(event)
+
+    def _confirm_unsaved_changes(self, action: str, discard_changes: bool = False) -> bool:
+        """Preserve unsaved changes before replacing the library or closing."""
+        modified = [b for b in self._books if b.is_modified]
+        if not modified:
+            return True
+        reply = QMessageBox.question(
+            self, "Unsaved Changes",
+            f"You have {len(modified)} book(s) with unsaved changes.\nSave before {action}?",
+            QMessageBox.Save | QMessageBox.Discard | QMessageBox.Cancel,
+        )
+        if reply == QMessageBox.Save:
+            failed_titles = self._save_books_blocking(modified)
+            if failed_titles:
+                QMessageBox.warning(
+                    self, "Save Failed",
+                    "These books could not be saved:\n"
+                    + "\n".join(failed_titles),
+                )
+                return False
+            if any(book.is_modified for book in self._books):
+                self.status_bar.showMessage(f"New edits remain unsaved. Save them before {action}.")
+                return False
+            return True
+        if reply == QMessageBox.Discard:
+            if discard_changes:
+                # Only metadata participates in the unsaved-tag snapshot.
+                # Covers are already persisted; chapter editor drafts stay put.
+                for book in modified:
+                    book.revert()
+                    self.detail_panel.refresh_book_state(book, refresh_metadata=True)
+                for row in range(len(self._books)):
+                    self.library_panel.model.refresh_row(row)
+                self.library_panel._update_info()
+            return True
+        return False
 
     def _restore_window_state(self):
         geometry = self.config.get("window_geometry")
@@ -618,13 +688,13 @@ class MainWindow(QMainWindow):
         """Save modified books on a worker thread and block until finished."""
         failed_titles: list[str] = []
         loop = QEventLoop(self)
-        worker = SaveWorker(books, self)
-        worker.book_saved.connect(self._rename_file_if_enabled)
+        worker = self._make_save_worker(books)
+        if worker is None:
+            return [book.display_title for book in books]
         worker.book_failed.connect(
             lambda book: failed_titles.append(book.display_title)
         )
-        worker.finished_signal.connect(lambda _s, _e: loop.quit())
-        worker.finished.connect(worker.deleteLater)
+        worker.finished.connect(loop.quit)
         worker.start()
         loop.exec()
         return failed_titles
@@ -637,4 +707,5 @@ class MainWindow(QMainWindow):
                 cancel()
             worker.requestInterruption()
             worker.quit()
-        return all(worker.wait(16000) for worker in workers)
+        stopped = [worker.wait(16000) for worker in workers]
+        return all(stopped)
