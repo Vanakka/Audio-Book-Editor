@@ -2,12 +2,28 @@
 
 import re
 import unicodedata
+from decimal import Decimal
 from difflib import SequenceMatcher
 
 
 def _normalize(value: str) -> str:
-    value = unicodedata.normalize("NFKD", value or "").encode("ascii", "ignore").decode()
-    return " ".join(re.findall(r"[a-z0-9]+", value.lower()))
+    value = unicodedata.normalize("NFKD", value or "")
+    value = "".join(char for char in value if not unicodedata.combining(char))
+    return " ".join(re.findall(r"[^\W_]+", value.casefold()))
+
+
+def _volume_number(value: str) -> Decimal | None:
+    """Identify explicit volume markers or a number ending the primary title."""
+    value = unicodedata.normalize("NFKC", value or "")
+    primary = re.split(r":\s*|\s+(?:-|–|—)\s+", value, maxsplit=1)[0].strip()
+    explicit = re.search(
+        r"(?:\b(?:book|volume|vol\.?)\s*|#\s*)(\d+(?:\.\d+)?)\b",
+        primary, re.IGNORECASE,
+    )
+    # Bare four-digit numbers are commonly publication years, not volumes.
+    trailing = re.search(r"\b(\d{1,3}(?:\.\d+)?)$", primary)
+    match = explicit or trailing
+    return Decimal(match.group(1)) if match else None
 
 
 def _similarity(left: str, right: str) -> float:
@@ -21,6 +37,11 @@ def is_relevant(candidate_title: str, title_hint: str,
     expected = _normalize(title_hint)
     if not candidate or not expected:
         return bool(candidate)
+
+    candidate_volume = _volume_number(candidate_title)
+    expected_volume = _volume_number(title_hint)
+    if candidate_volume is not None and expected_volume is not None and candidate_volume != expected_volume:
+        return False
 
     candidate_tokens = set(candidate.split())
     expected_tokens = set(expected.split())

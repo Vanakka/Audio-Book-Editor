@@ -18,7 +18,7 @@ class ChapterMetadataTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "ffprobe"):
             probe_chapters("book.m4b")
 
-    @patch("core.chapters.probe_chapters", return_value=[{"start": 0, "end": 1}])
+    @patch("core.chapters.probe_chapters", return_value=[{"start": 0, "end": 1, "tags": {"title": "Chapter 1"}}])
     @patch("core.chapters.MP4")
     @patch("core.chapters.resolve_tool", return_value="ffmpeg")
     @patch("core.chapters.media_tools_available", return_value=(True, ""))
@@ -28,6 +28,8 @@ class ChapterMetadataTests(unittest.TestCase):
             source.write_bytes(b"original")
 
             def fake_run(command, **_kwargs):
+                if "-show_streams" in command:
+                    return Mock(returncode=0, stderr="", stdout='{"streams": []}')
                 Path(command[-1]).write_bytes(b"rewritten")
                 return Mock(returncode=0, stderr="")
 

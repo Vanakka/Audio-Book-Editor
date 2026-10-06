@@ -15,12 +15,17 @@ def jpeg_bytes(color):
     return output.getvalue()
 
 
+def jpeg_response(color):
+    response = Mock(status_code=200, headers={})
+    response.iter_content.return_value = [jpeg_bytes(color)]
+    response.raise_for_status.return_value = None
+    return response
+
+
 class CoverDownloaderTests(unittest.TestCase):
     def test_identifierless_books_do_not_share_a_cache_entry(self):
-        first_response = Mock(content=jpeg_bytes("red"))
-        first_response.raise_for_status.return_value = None
-        second_response = Mock(content=jpeg_bytes("blue"))
-        second_response.raise_for_status.return_value = None
+        first_response = jpeg_response("red")
+        second_response = jpeg_response("blue")
 
         with TemporaryDirectory() as root, \
                 patch.object(covers, "COVERS_DIR", Path(root)), \
@@ -31,10 +36,8 @@ class CoverDownloaderTests(unittest.TestCase):
         self.assertNotEqual(first, second)
 
     def test_force_replaces_an_existing_identifier_cache_entry(self):
-        first_response = Mock(content=jpeg_bytes("red"))
-        first_response.raise_for_status.return_value = None
-        second_response = Mock(content=jpeg_bytes("blue"))
-        second_response.raise_for_status.return_value = None
+        first_response = jpeg_response("red")
+        second_response = jpeg_response("blue")
 
         with TemporaryDirectory() as root, \
                 patch.object(covers, "COVERS_DIR", Path(root)), \

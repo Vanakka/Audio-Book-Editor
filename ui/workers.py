@@ -1,6 +1,8 @@
 """Background thread workers for long-running operations."""
 
-from PySide6.QtCore import QThread, Signal
+import copy
+
+from PySide6.QtCore import QThread, Signal, Slot
 
 from core.models import AudioBook, MetadataResult
 from core.scanner import scan_directory
@@ -103,8 +105,19 @@ class SaveWorker(QThread):
 
     def __init__(self, books: list[AudioBook], parent=None):
         super().__init__(parent)
-        self.books = books
+        self.books = list(books)
+        # Capture the submitted values before the UI can make further edits.
+        # Mutagen snapshots only these copies after writing, never live editors.
+        self._save_copies = {id(book): copy.deepcopy(book) for book in self.books}
         self._cancelled = False
+        self.book_saved.connect(self._acknowledge_saved_book)
+
+    @Slot(object)
+    def _acknowledge_saved_book(self, book: AudioBook):
+        """Update the saved baseline on the owning (UI) thread."""
+        saved_book = self._save_copies[id(book)]
+        book._original_values = dict(saved_book._original_values)
+        book.check_modified()
 
     def run(self):
         success = 0
@@ -115,7 +128,9 @@ class SaveWorker(QThread):
             if self._cancelled:
                 break
             self.progress.emit(i + 1, total)
-            if write_tags(book):
+            saved_book = self._save_copies[id(book)]
+            if write_tags(saved_book):
+                saved_book.snapshot()
                 success += 1
                 self.book_saved.emit(book)
             else:

@@ -20,9 +20,15 @@ def get_with_retry(url: str, *, requester: Callable = requests.get,
         response = requester(url, **kwargs)
         last_response = response
         if response.status_code not in statuses:
-            response.raise_for_status()
+            try:
+                response.raise_for_status()
+            except requests.RequestException:
+                response.close()
+                raise
             return response
 
+        # A rejected streamed response otherwise keeps its connection open.
+        response.close()
         if attempt + 1 < attempts:
             retry_after = response.headers.get("Retry-After", "")
             try:

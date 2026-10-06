@@ -114,7 +114,7 @@ class DetailPanel(
             self.title_edit, self.subtitle_edit, self.author_edit,
             self.narrator_edit, self.series_edit, self.series_num_edit,
             self.description_edit, self.publisher_edit, self.year_edit,
-            self.genre_edit, self.language_edit,
+            self.genre_edit, self.language_edit, self.asin_edit, self.cdek_edit,
         ]
 
     def set_enabled(self, enabled: bool):
@@ -129,6 +129,25 @@ class DetailPanel(
         self._updating = True
         self._current_book = book
 
+        self._refresh_metadata_fields(book)
+
+        self.cover_widget.set_cover(book.cover_path)
+        if book.cover_path and os.path.exists(book.cover_path):
+            px = QPixmap(book.cover_path)
+            self.cover_info_label.setText(f"{px.width()}x{px.height()}px")
+        else:
+            self.cover_info_label.setText("No cover loaded")
+        self.cover_search_edit.setText(book.title)
+        self.cover_author_edit.setText(book.author.split(",")[0].strip() if book.author else "")
+
+        self._refresh_file_info(book)
+        self.filename_edit.setText(self._build_suggested_filename(book))
+
+        self._load_chapters(book)
+        self.set_enabled(True)
+        self._updating = False
+
+    def _refresh_metadata_fields(self, book: AudioBook):
         self.title_edit.setText(book.title)
         self.subtitle_edit.setText(book.subtitle)
         self.author_edit.setText(book.author)
@@ -148,18 +167,8 @@ class DetailPanel(
         self.cdek_edit.setReadOnly(bool(book.cdek_tag))
         self.cdek_edit.setStyleSheet("" if not book.cdek_tag else "background-color: palette(midlight);")
 
-        self.cover_widget.set_cover(book.cover_path)
-        if book.cover_path and os.path.exists(book.cover_path):
-            px = QPixmap(book.cover_path)
-            self.cover_info_label.setText(f"{px.width()}x{px.height()}px")
-        else:
-            self.cover_info_label.setText("No cover loaded")
-        self.cover_search_edit.setText(book.title)
-        self.cover_author_edit.setText(book.author.split(",")[0].strip() if book.author else "")
-
+    def _refresh_file_info(self, book: AudioBook):
         self.current_filename_label.setText(book.filename)
-        self.filename_edit.setText(self._build_suggested_filename(book))
-
         self.file_info_label.setText(
             f"Path: {book.file_path}\n"
             f"Folder: {book.folder_path}\n"
@@ -167,9 +176,18 @@ class DetailPanel(
             f"Source: {book.metadata_source}"
         )
 
-        self._load_chapters(book)
-        self.set_enabled(True)
-        self._updating = False
+    def refresh_book_state(self, book: AudioBook, refresh_metadata: bool = False):
+        """Refresh tags/paths without replacing cover or chapter editor drafts."""
+        if self._current_book is not book:
+            return
+        was_updating = self._updating
+        self._updating = True
+        try:
+            if refresh_metadata:
+                self._refresh_metadata_fields(book)
+            self._refresh_file_info(book)
+        finally:
+            self._updating = was_updating
 
     def clear(self):
         self._updating = True

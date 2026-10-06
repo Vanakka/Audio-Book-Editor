@@ -2,6 +2,7 @@
 # Source code in the project root is never modified or overwritten.
 
 from pathlib import Path
+import sys
 
 from PyInstaller.utils.hooks import collect_all, collect_submodules
 
@@ -77,6 +78,13 @@ a = Analysis(
     noarchive=False,
     optimize=0,
 )
+
+if sys.platform == "win32":
+    # This Qt build uses Windows-native ICU's unsuffixed exports. A third-party
+    # icuuc.dll on the build PATH can be collected under the same name and
+    # prevent QtWidgets from importing. Let Windows load its native ICU DLL;
+    # retain the Qt, Shiboken and Visual C++ runtime binaries.
+    a.binaries = [entry for entry in a.binaries if Path(entry[0]).name.lower() != "icuuc.dll"]
 
 pyz = PYZ(a.pure)
 

@@ -53,8 +53,9 @@ def _format_template(book: AudioBook, template: str) -> str:
 
 def preview_renames(books: list[AudioBook], template: str) -> list[tuple[AudioBook, str, str, bool]]:
     """Preview rename operations. Returns list of (book, old_name, new_name, has_conflict)."""
-    previews = []
-    seen_names = {}
+    candidates = []
+    source_targets = {}
+    destination_sources = {}
 
     for book in books:
         old_name = Path(book.folder_path).name
@@ -63,19 +64,22 @@ def preview_renames(books: list[AudioBook], template: str) -> list[tuple[AudioBo
         if not new_name:
             new_name = old_name
 
-        # Check for conflicts
-        parent = str(Path(book.folder_path).parent)
-        key = (parent, new_name.lower())
-        conflict = False
+        source = os.path.normcase(os.path.abspath(book.folder_path))
+        destination = os.path.normcase(os.path.abspath(Path(book.folder_path).parent / new_name))
+        source_targets.setdefault(source, set()).add(destination)
+        destination_sources.setdefault(destination, set()).add(source)
+        candidates.append((book, old_name, new_name, source, destination))
 
-        if key in seen_names:
-            conflict = True
-        elif new_name != old_name:
-            new_path = Path(book.folder_path).parent / new_name
-            if new_path.exists():
-                conflict = True
-
-        seen_names[key] = book
+    previews = []
+    for book, old_name, new_name, source, destination in candidates:
+        # One folder cannot be split into different names, and different source
+        # folders cannot share a destination. Sibling books naming the same
+        # source folder identically are one operation, not a conflict.
+        conflict = (
+            len(source_targets[source]) > 1
+            or len(destination_sources[destination]) > 1
+            or (source != destination and os.path.lexists(destination))
+        )
         previews.append((book, old_name, new_name, conflict))
 
     return previews
@@ -87,24 +91,36 @@ def execute_renames(books: list[AudioBook], template: str) -> tuple[int, int]:
     success = 0
     errors = 0
 
-    for book, old_name, new_name, conflict in previews:
-        if conflict or old_name == new_name:
+    folders = {}
+    for preview in previews:
+        source = os.path.normcase(os.path.abspath(preview[0].folder_path))
+        folders.setdefault(source, []).append(preview)
+
+    for siblings in folders.values():
+        book, old_name, new_name, conflict = siblings[0]
+        if any(preview[3] for preview in siblings):
+            logger.warning("Cannot rename folder %s: conflicting destinations", book.folder_path)
+            errors += 1
+            continue
+        if old_name == new_name:
             continue
 
         old_path = Path(book.folder_path)
         new_path = old_path.parent / new_name
 
         try:
+            relative_files = [Path(sibling[0].file_path).relative_to(old_path) for sibling in siblings]
+            if os.path.lexists(new_path) and new_path != old_path:
+                raise FileExistsError(f"Destination already exists: {new_path}")
             os.rename(str(old_path), str(new_path))
 
-            # Update book paths
-            old_file = Path(book.file_path)
-            new_file_path = new_path / old_file.name
-            book.folder_path = str(new_path)
-            book.file_path = str(new_file_path)
+            # The whole folder moved, including every provided sibling file.
+            for sibling, relative_file in zip(siblings, relative_files):
+                sibling[0].folder_path = str(new_path)
+                sibling[0].file_path = str(new_path / relative_file)
 
             success += 1
-        except OSError as e:
+        except (OSError, ValueError) as e:
             logger.error("Failed to rename %s -> %s: %s", old_path, new_path, e)
             errors += 1
 
@@ -246,6 +262,35 @@ def preview_sort(books: list[AudioBook], dest_root: str,
     return previews
 
 
+def _move_no_overwrite(source: str, destination: str) -> None:
+    """Move a file without replacing an existing destination, across volumes."""
+    try:
+        os.link(source, destination)
+    except FileExistsError:
+        raise
+    except OSError:
+        # Cross-volume moves and filesystems without hard links need a copy.
+        # Exclusive creation makes the final collision check part of the write.
+        created = False
+        try:
+            with open(source, "rb") as source_file:
+                with open(destination, "xb") as destination_file:
+                    created = True
+                    shutil.copyfileobj(source_file, destination_file)
+            shutil.copystat(source, destination)
+            os.unlink(source)
+        except BaseException:
+            if created:
+                os.unlink(destination)
+            raise
+    else:
+        try:
+            os.unlink(source)
+        except BaseException:
+            os.unlink(destination)
+            raise
+
+
 def execute_sort(previews: list[tuple[AudioBook, str, str, bool]]) -> tuple[int, int]:
     """Execute sort operations. Returns (success_count, error_count)."""
     success = 0
@@ -263,15 +308,15 @@ def execute_sort(previews: list[tuple[AudioBook, str, str, bool]]) -> tuple[int,
             # Move the m4b and companion cue as one logical operation.
             old_cue = Path(old_path).with_suffix(".cue")
             new_cue = Path(new_path).with_suffix(".cue")
-            if old_cue.exists() and new_cue.exists():
+            if old_cue.exists() and os.path.lexists(new_cue):
                 raise shutil.Error(f"Companion cue already exists: {new_cue}")
 
-            shutil.move(old_path, new_path)
+            _move_no_overwrite(old_path, new_path)
             if old_cue.exists():
                 try:
-                    shutil.move(str(old_cue), str(new_cue))
+                    _move_no_overwrite(str(old_cue), str(new_cue))
                 except (OSError, shutil.Error):
-                    shutil.move(new_path, old_path)
+                    _move_no_overwrite(new_path, old_path)
                     raise
 
             # Update book paths

@@ -1,6 +1,9 @@
-PySide6>=6.10,<6.11
+PySide6>=6.11.2,<6.12
 mutagen>=1.47,<2
-requests>=2.31,<3
+requests>=2.33,<3
 beautifulsoup4>=4.12,<5
-Pillow>=10,<13
+Pillow>=12.3,<13
 openpyxl>=3.1,<4
+# Patched minimums for HTTP and HTML parser transitive dependencies.
+urllib3>=2.8,<3
+soupsieve>=2.9,<3
